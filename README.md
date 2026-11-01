@@ -1,4 +1,4 @@
-# climbing_rl — RL du Microban grimpeur avec mjlab (Léonard Bettcher)
+# Apprentissage par renforcement du robot grimpeur Microban (Rhoban) — hackathon Rock Climbing Robots 2026
 
 Ce projet a été ma première expérience en apprentissage par renforcement (Reinforcement Learning).
 J'ai mis en place un environnement d'entraînement GPU (mjlab, sur ma RTX 5070) pour le robot grimpeur du hackathon,
