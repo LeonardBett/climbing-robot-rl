@@ -1,0 +1,7 @@
+cat > .gitignore << 'EOF'
+__pycache__/
+.venv/
+logs/
+wandb/
+*:Zone.Identifier
+EOF

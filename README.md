@@ -28,15 +28,19 @@ réglages PPO (son robot est l'ancien Microban de marche, sans boules).
 
 ## Installation
 
-Ce dossier doit être dans le dépôt de l'équipe, à côté de `simulator/` : on y lit les murs, la géométrie des prises et
-la posture accrochée. Il faut un GPU NVIDIA (MuJoCo Warp ne fonctionne qu'avec CUDA) et Git LFS (maillages du robot).
+Il faut un GPU NVIDIA (MuJoCo Warp ne fonctionne qu'avec CUDA) et Git LFS (maillages du robot).
+Le simulateur officiel est inclus comme sous-module (on y lit les murs, la géométrie des prises et la posture
+accrochée) : cloner avec `--recursive`.
 
 ```bash
 sudo apt install -y git-lfs && git lfs install
-cd climbing_rl
+git clone --recursive git@github.com:LeonardBett/climbing-robot-rl.git
+cd climbing-robot-rl
 uv sync --python 3.12
-uv run check-scene --num-envs 64 --seconds 3     # le robot tient-il au mur sans politique ?
+uv run check-scene --num-envs 64 --seconds 3
 ```
+
+Déjà cloné sans `--recursive` : `git submodule update --init`.
 
 `check-scene` vérifie la pose de départ (erreur de l'IK, aucun contact entre membres), puis simule quelques secondes
 avec action nulle : on attend les 4 boules accrochées dans 100 % des environnements et aucun `nefc overflow`.
@@ -63,8 +67,8 @@ uv run train Climb-BothFeet-Microban --env.scene.num-envs 6144
 uv run train Climb-BothFeet-Microban --env.scene.num-envs 6144 \
   --agent.resume True --agent.load-run <dossier du run> --agent.load-checkpoint model_<N>.pt
 
-# regarder le résultat
-uv run play Climb-BothFeet-Microban --checkpoint-file logs/rsl_rl/climb_both_feet/<date>/model_<N>.pt --viewer viser --num-envs 4
+# regarder le résultat de l'entrainement de la monté d'une prise des deux pieds
+uv run play Climb-BothFeet-Microban --checkpoint-file models/climb_both_feet/model_200.pt --viewer viser --num-envs 4
 ```
 
 ## Organisation

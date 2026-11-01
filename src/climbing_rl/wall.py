@@ -20,7 +20,7 @@ import numpy as np
 # --- Où trouver les données du simulateur officiel ---------------------------------------------------------
 # Par défaut : <racine du dépôt>/simulator/climbing_sim, ce fichier étant dans <racine>/climbing_rl/src/climbing_rl/.
 # Sinon : variable d'environnement CLIMBING_SIM_DIR (le dossier qui contient walls/ et assets/).
-_DEFAULT_SIM_DIR = Path(__file__).resolve().parents[3] / "simulator" / "climbing_sim"
+_DEFAULT_SIM_DIR = Path(__file__).resolve().parents[2] / "simulator" / "climbing_sim"
 SIM_DIR = Path(os.environ.get("CLIMBING_SIM_DIR", _DEFAULT_SIM_DIR))
 WALLS_DIR = SIM_DIR / "walls"
 HOLD_DIR = SIM_DIR / "assets" / "hold"
