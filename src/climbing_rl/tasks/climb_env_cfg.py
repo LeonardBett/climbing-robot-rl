@@ -35,7 +35,7 @@ from climbing_rl.scene import wall_spec_fn
 from climbing_rl.wall import LIMBS, Hold, Wall
 
 # Bibliotheque de fonctions utilitaires, utilisés pour les rewards et les observations
-from climbing_rl.tasks import mdp
+from climbing_rl.tasks import mdp, records_mdp, route_mdp
 
 # Constantes pour la simulation
 WALL = "N1"
@@ -236,8 +236,7 @@ def left_foot_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.episode_length_s = 8.0
   if play:
     cfg.episode_length_s = 1e9
-  return cfg
-
+  return cfg 
 
 # Tache avec pour but de lever les deux pieds vers leurs prises supérieurs, en gardant les deux bras attachés
 # (Travail personel)
@@ -299,7 +298,7 @@ def both_feet_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     cfg.episode_length_s = 1e9
   return cfg
 
-# Tache avec but de grimper le plus haut possible sur le mur N1
+# Tache avec pour but de grimper le plus haut possible sur le mur N1 (Echec de l'architecture de record)
 # (Travail personel)
 def climb_N1_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   wall = Wall.load(WALL)
@@ -309,35 +308,87 @@ def climb_N1_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   critic = cfg.observations["critic"].terms
   critic.pop("hooked")
-  critic["ball_offsets"] = ObservationTermCfg(func=mdp.nearest_socket_offsets, params={"wall_name": WALL})
-  critic["next_candidate"] = ObservationTermCfg(func=mdp.next_candidate_offsets, params={"wall_name": WALL})
-  critic["hooked_number"] = ObservationTermCfg(func=mdp.hooked_any, params={"wall_name": WALL})
+  critic["ball_offsets"] = ObservationTermCfg(func=records_mdp.nearest_socket_offsets, params={"wall_name": WALL})
+  critic["next_candidate"] = ObservationTermCfg(func=records_mdp.next_candidate_offsets, params={"wall_name": WALL})
+  critic["hooked_number"] = ObservationTermCfg(func=records_mdp.hooked_any, params={"wall_name": WALL})
 
-  cfg.terminations["fell"] = TerminationTermCfg(func=mdp.trunk_dropped_record, params={"max_drop": 0.05})
-  cfg.terminations["less_two_hooked"] = TerminationTermCfg(func=mdp.less_two_hooked, params={})
+  cfg.terminations["fell"] = TerminationTermCfg(func=records_mdp.trunk_dropped_record, params={"max_drop": 0.05})
+  cfg.terminations["less_two_hooked"] = TerminationTermCfg(func=records_mdp.less_two_hooked, params={})
 
-  cfg.events["reset_record"] = EventTermCfg(func=mdp.reset_record, mode="reset", params={"wall_name": WALL})
+  cfg.events["reset_record"] = EventTermCfg(func=records_mdp.reset_record, mode="reset", params={"wall_name": WALL})
 
   # Creation des reward exclusive à cette tache
   # Reward de 
   cfg.rewards["trunk_height_record"] = RewardTermCfg(
-    func=mdp.trunk_height_record, weight=300.0, params={},
+    func=records_mdp.trunk_height_record, weight=300.0, params={},
   )
 
   # Reward progressive de guidage
   cfg.rewards["next_hold_rung"] = RewardTermCfg(
-    func=mdp.next_hold_rung, weight=700.0, params={},
+    func=records_mdp.next_hold_rung, weight=700.0, params={},
   )
 
   # Reward 
   cfg.rewards["member_hold_record"] = RewardTermCfg(
-    func=mdp.member_hold_record, weight=250.0, params={},
+    func=records_mdp.member_hold_record, weight=250.0, params={},
   )
 
   # Reward qui puni un épisode qui se termine par un echec (fell ou less than two hooked)
   # Le probleme est que cette tache recompense les records et non la continuité
   # Donc sans cette reward punitive, le robot prefere se jeter dans le vide pour monter un peu une fois les reward de record facile obtenu
-  cfg.rewards["terminated_penalty"] = RewardTermCfg(func=mdp.terminated_penalty, weight=-500.0)
+  cfg.rewards["terminated_penalty"] = RewardTermCfg(func=records_mdp.terminated_penalty, weight=-500.0)
+
+  cfg.episode_length_s = 20.0
+  if play:
+    cfg.episode_length_s = 1e9
+  return cfg
+
+# Tache avec pour but de grimper le plus haut possible sur le mur N1, cette fois en suivant un chemin hardcodé (pas de solveur pour le moment)
+# (Travail personel)
+def climb_N1_route_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  wall = Wall.load(WALL)
+  
+  # Maillages de collision sur les prises des rangées 2 et 7 (là où passe le pied). Sans ca, la tige et le pied traversent le corps des prises (coute 20% de vitesse)
+  cfg = _base_cfg(play, max_row=87, mesh_holds=tuple(h for h in wall.holds))
+
+  # On modifie les observations exclusives au critic pour que les prises cibles soit celle qu'on vise dans cette tache
+  critic = cfg.observations["critic"].terms
+  critic.pop("hooked")
+  critic["ball_offsets"] = ObservationTermCfg(func=route_mdp.cycling_ball_offsets, params={"wall_name": WALL})
+  critic["active_limb_offset"] = ObservationTermCfg(func=route_mdp.active_limb_offset, params={"wall_name": WALL})
+
+  # Le membre actif : l'actor doit le connaître pour savoir quoi bouger (le critic aussi)
+  actor = cfg.observations["actor"].terms
+  actor["active_limb"] = ObservationTermCfg(func=route_mdp.active_limb, params={"wall_name": WALL})
+  critic["active_limb"] = ObservationTermCfg(func=route_mdp.active_limb, params={"wall_name": WALL})
+
+  # Remise à zéro de l'état de la route (coup en cours, prises attribuées, record du tronc)
+  cfg.events["reset_route"] = EventTermCfg(func=route_mdp.reset_route, mode="reset", params={"wall_name": WALL})
+
+  # Creation des reward exclusive à cette tache
+  # Reward de maintient des boules à leurs prises (contrainte douce), note de 0 à 1 en fonction de la distance d'une boule d'une main avec sa prise de base (moyenne des 2 bras)
+  cfg.rewards["others_limbs_hooked"] = RewardTermCfg(
+    func=route_mdp.others_limbs_hooked, weight=1.0, params={"std": 0.01},
+  )
+  # Reward progressive de guidage, note de 0 à 2 en fonction de la distance entre un pied et sa prise cible
+  cfg.rewards["active_limb_reach"] = RewardTermCfg(
+    func=route_mdp.active_limb_reach, weight=2.0, params={"std": 0.04},
+  )
+  # Reward progressive de guidage, note de 0 à 2 en fonction de la distance entre un pied et sa prise cible
+  cfg.rewards["active_limb_reach_far"] = RewardTermCfg(
+    func=route_mdp.active_limb_reach, weight=1.0, params={"std": 0.12},
+  )
+
+  # Reward tout ou rien, 5 si la boule du pied est attaché dans sa prise cible (moins de 6 mm du centre de la prise)
+  cfg.rewards["active_limb_hooked"] = RewardTermCfg(
+    func=route_mdp.active_limb_hooked, weight=500.0, params={},
+  )
+
+  # Echec exclusif a cette tache (contrainte dure), si un des bras se détache de leurs prise (s’éloigne de plus de 3 cm de sa prise)
+  cfg.terminations["other_limbs_lost"] = TerminationTermCfg(
+    func=route_mdp.other_limbs_lost, params={"max_dist": 0.03},
+  )
+  cfg.terminations["fell"] = TerminationTermCfg(func=route_mdp.route_trunk_dropped, params={"max_drop": 0.05})
 
   cfg.episode_length_s = 20.0
   if play:
