@@ -323,15 +323,21 @@ def climb_N1_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["trunk_height_record"] = RewardTermCfg(
     func=mdp.trunk_height_record, weight=300.0, params={},
   )
+
   # Reward progressive de guidage
   cfg.rewards["next_hold_rung"] = RewardTermCfg(
-    func=mdp.next_hold_rung, weight=1.0, params={"std": 0.04},
+    func=mdp.next_hold_rung, weight=700.0, params={},
   )
 
   # Reward 
   cfg.rewards["member_hold_record"] = RewardTermCfg(
     func=mdp.member_hold_record, weight=250.0, params={},
   )
+
+  # Reward qui puni un épisode qui se termine par un echec (fell ou less than two hooked)
+  # Le probleme est que cette tache recompense les records et non la continuité
+  # Donc sans cette reward punitive, le robot prefere se jeter dans le vide pour monter un peu une fois les reward de record facile obtenu
+  cfg.rewards["terminated_penalty"] = RewardTermCfg(func=mdp.terminated_penalty, weight=-500.0)
 
   cfg.episode_length_s = 20.0
   if play:

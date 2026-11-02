@@ -20,6 +20,7 @@ if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 HOOK_TOL = 0.006
+LOST_TOL = 0.03  # au-delà de 3 cm de toute coupe, la boule est considérée comme lâchée (terminaison)
 HOLD_STEPS = 5  # pas de politique (5 x 20 ms = 0,1 s) où une boule doit rester dans une prise pour valider un record
 _ROBOT = SceneEntityCfg("robot")
 
@@ -121,6 +122,8 @@ def _ensure_state(env: ManagerBasedRlEnv, wall_name: str) -> None:
   env._climb_hook_count = torch.zeros(n, 4, dtype=torch.long, device=env.device)      # (N, 4) pas d'affilée dans une prise du barreau suivant
   env._climb_last_step = -1                                                            # dernier pas traité par _update_state
 
+  env._climb_approach_record = torch.full((n, 4), float("inf"), device=env.device)  # (N, 4) plus petite distance atteinte vers une candidate
+
 
 def _check_state(env: ManagerBasedRlEnv) -> None:
   if not hasattr(env, "_climb_sockets"):
@@ -136,6 +139,7 @@ def reset_record(env: ManagerBasedRlEnv, env_ids: torch.Tensor | None, wall_name
   env._climb_limb_record[env_ids] = env._climb_start_rows
   env._climb_trunk_record[env_ids] = env._climb_start_z
   env._climb_hook_count[env_ids] = 0
+  env._climb_approach_record[env_ids] = float("inf")
 
 
 # ---- calculs géométriques sur l'état actuel ---------------------------------------------------------------
@@ -191,6 +195,15 @@ def _update_state(env: ManagerBasedRlEnv) -> None:
   # Candidates, APRÈS la mise à jour des records : un membre qui vient de valider vise déjà le barreau suivant
   cand_dist, _ = _candidates(env, d)
 
+  # Record d'approche : plus petite distance atteinte vers une candidate du barreau suivant.
+  # Remis à inf quand le membre valide une prise (ses candidates changent de barreau).
+  prev = torch.where(new_record, torch.full_like(cand_dist, float("inf")), env._climb_approach_record)
+  # Gain = de combien le record s'est amélioré à ce pas. Au premier pas (prev = inf), on initialise sans récompenser.
+  env._climb_approach_gain = torch.where(
+    torch.isfinite(prev), torch.clamp(prev - cand_dist, min=0.0), torch.zeros_like(cand_dist)
+  )  # (N, 4) en mètres
+  env._climb_approach_record = torch.minimum(prev, cand_dist)
+
   # Ce que lisent les récompenses et terminaisons
   n_hooked = hooked.sum(dim=-1)
   env._climb_hooked = hooked                                            # (N, 4) bool
@@ -199,6 +212,7 @@ def _update_state(env: ManagerBasedRlEnv) -> None:
   env._climb_new_record = new_record                                    # (N, 4) bool, vrai au pas où le membre bat son record
   env._climb_cand_dist = cand_dist                                      # (N, 4) distance à la candidate la plus proche (inf si aucune)
   env._climb_trunk_z = z                                                # (N,)   hauteur actuelle du tronc
+  env._climb_n_held = (dist < LOST_TOL).sum(dim=-1)                     # (N,)   nombre de boules à moins de 3 cm d'une coupe
   # env._climb_trunk_gain (N,) et env._climb_trunk_record (N,) sont rangés plus haut
 
 
@@ -226,6 +240,9 @@ def next_candidate_offsets(env: ManagerBasedRlEnv, wall_name: str) -> torch.Tens
   offset = torch.where(torch.isfinite(cand_dist)[..., None], offset, torch.zeros_like(offset))
   return offset.reshape(env.num_envs, -1)
 
+def terminated_penalty(env: ManagerBasedRlEnv) -> torch.Tensor:
+  """1 au pas où l'épisode se termine par un échec (pas par time-out), 0 sinon. À utiliser avec un poids négatif."""
+  return env.termination_manager.terminated.float()
 
 # Travail personel : terminaisons et récompenses de la tache climb_N1, fait avec l'aide des exemples plus haut
 # Chacune commence par _update_state(env) pour mettre à jour env avec les dernière valeur de la simulation (fait une seul fois par pas)
@@ -239,7 +256,7 @@ def trunk_dropped_record(env: ManagerBasedRlEnv, max_drop: float = 0.05) -> torc
 def less_two_hooked(env: ManagerBasedRlEnv) -> torch.Tensor:
   # Terminaison : moins de 2 boules accrochés à une prise
   _update_state(env)
-  return env._climb_n_hooked < 2
+  return env._climb_n_held < 2
 
 def trunk_height_record(env: ManagerBasedRlEnv) -> torch.Tensor:
   # Reward : Gain de record de hauteur du tronc à ce pas
@@ -247,12 +264,12 @@ def trunk_height_record(env: ManagerBasedRlEnv) -> torch.Tensor:
   return env._climb_trunk_gain
 
 def next_hold_rung(env: ManagerBasedRlEnv, std: float = 0.04) -> torch.Tensor:
-  # Reward : On calcul la gaussienne de la distance d'une prise à sa candidate, comptée seulement si les 3 autres membres tiennent (maximum sur les 4 membres)
+  # Reward : On recompense un membre si il s'approche de sa prise idéal et que les 3 autres reste attaché
   _update_state(env)
-  # On fait torch.exp(-torch.square(env._climb_cand_dist/std)) pour calculer la gaussienne de la distance de chaque boule vers la prise cible
+  # On recupere pour chaque membre du robot sont gain de distance avec la prise cible env._climb_approach_gain
   # On multiplie par env._climb_others_hooked.float() pour mettre à 0 les membres dont les 3 autre ne sont pas attachés
   # On garde uniquement le plus grand des 4 avec .max(dim=-1).values
-  return (torch.exp(-torch.square(env._climb_cand_dist/std)) * env._climb_others_hooked.float()).max(dim=-1).values
+  return (env._climb_approach_gain * env._climb_others_hooked.float()).max(dim=-1).values
 
 def member_hold_record(env: ManagerBasedRlEnv) -> torch.Tensor:
   # Reward : Nombre de membres qui battent leur record à ce pas
