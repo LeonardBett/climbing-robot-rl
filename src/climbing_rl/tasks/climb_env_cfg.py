@@ -239,7 +239,7 @@ def left_foot_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
-# Tache avec but de lever les deux pieds vers leurs prises supérieurs, en gardant les deux bras attachés
+# Tache avec pour but de lever les deux pieds vers leurs prises supérieurs, en gardant les deux bras attachés
 # (Travail personel)
 def both_feet_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   wall = Wall.load(WALL)
@@ -295,6 +295,45 @@ def both_feet_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     func=mdp.limbs_lost, params={"sockets": goal, "limbs": OTHERS_THAN_BOTH_FEET, "max_dist": 0.03},
   )
   cfg.episode_length_s = 8.0
+  if play:
+    cfg.episode_length_s = 1e9
+  return cfg
+
+# Tache avec but de grimper le plus haut possible sur le mur N1
+# (Travail personel)
+def climb_N1_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  wall = Wall.load(WALL)
+  
+  # On active maitenant le maillage des collisions pour toutes les prises du mur
+  cfg = _base_cfg(play, max_row=87, mesh_holds=tuple(h for h in wall.holds))
+
+  critic = cfg.observations["critic"].terms
+  critic.pop("hooked")
+  critic["ball_offsets"] = ObservationTermCfg(func=mdp.nearest_socket_offsets, params={"wall_name": WALL})
+  critic["next_candidate"] = ObservationTermCfg(func=mdp.next_candidate_offsets, params={"wall_name": WALL})
+  critic["hooked_number"] = ObservationTermCfg(func=mdp.hooked_any, params={"wall_name": WALL})
+
+  cfg.terminations["fell"] = TerminationTermCfg(func=mdp.trunk_dropped_record, params={"max_drop": 0.05})
+  cfg.terminations["less_two_hooked"] = TerminationTermCfg(func=mdp.less_two_hooked, params={})
+
+  cfg.events["reset_record"] = EventTermCfg(func=mdp.reset_record, mode="reset", params={"wall_name": WALL})
+
+  # Creation des reward exclusive à cette tache
+  # Reward de 
+  cfg.rewards["trunk_height_record"] = RewardTermCfg(
+    func=mdp.trunk_height_record, weight=300.0, params={},
+  )
+  # Reward progressive de guidage
+  cfg.rewards["next_hold_rung"] = RewardTermCfg(
+    func=mdp.next_hold_rung, weight=1.0, params={"std": 0.04},
+  )
+
+  # Reward 
+  cfg.rewards["member_hold_record"] = RewardTermCfg(
+    func=mdp.member_hold_record, weight=250.0, params={},
+  )
+
+  cfg.episode_length_s = 20.0
   if play:
     cfg.episode_length_s = 1e9
   return cfg
