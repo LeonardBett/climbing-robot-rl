@@ -8,7 +8,7 @@ I relied on an AI (Claude) to assemble this environment from three existing repo
 model, official simulator) that did not work together as-is, to fix the collision flaws I had spotted, and to learn
 how PPO and the structure of a task work from an example.
 
-https://github.com/user-attachments/assets/de18ed70-e726-46a8-8a15-fd353b5d9e58
+https://github.com/user-attachments/assets/44066fdb-e204-49ff-a39f-2f81f943e0cf
 
 ## Repositories used
 
