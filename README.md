@@ -79,11 +79,13 @@ uv run play Climb-N1Route-Microban --checkpoint-file models/climb_n1_route/model
 **`Climb-N1-Microban` (failed).** The robot was free to choose any hold of the next rung, and was rewarded for its
 height records. Three runs, three ways for the robot to cheat the rewards:
 1. Guidance by proximity to the nearest higher hold: the right hand stayed stuck *under* an unreachable hold and
-   collected the reward at every step.
-2. Guidance by distance records (no more farming): nothing was rewarded for staying hooked anymore, so falling cost
-   nothing and the robot let go of everything.
-3. With a fall penalty: the robot held on, but only took the easy points (the right hand) and never moved its feet.
-
+   collected this reward at every step, without ever learning to reach a hold it could actually hook into.
+2. Guidance by distance records (no more farming): after moving the right hand up, the robot never discovered how to
+   move its other limbs. Falling cost nothing, so it learned to jump up and let go, just to gain a few points from its
+   trunk height record.
+3. With a fall penalty: the robot only took the easy points (the right hand), then learned that staying still was
+   the best way to keep its score without risking the penalty.
+  
 **`Climb-N1Route-Microban` (works).** Same recipe as `BothFeet`, chained: a hard-coded route of moves on N1 (a
 pattern over 2 rungs, repeated up to the top), one active limb at a time, known to the policy as an observation.
 - Rewards: the 3 other limbs staying in their holds (at every step), Gaussian guidance of the active limb towards
@@ -93,9 +95,8 @@ pattern over 2 rungs, repeated up to the top), one active limb at a time, known 
 - Training: 4 moves learned in ~500 iterations, then the left hand got stuck (too far from its target for the narrow
   Gaussian): resumed from iteration 500 with the wide Gaussian added, and the robot climbed the whole wall at ~1000.
 
-General lessons: watch the episode terminations and the viewer, not only the rewards; a reward given at every step
-can be farmed, a reward given only for progress removes the reason to hold on; and a fixed, reachable target is far
-easier to learn than a free choice.
+General lessons: watch the episode terminations and the viewer, not only the rewards/terminaisons; a reward given at every step
+can be farmed, and a fixed, reachable target is far easier to learn than a free choice.
 
 ## Organization
 
