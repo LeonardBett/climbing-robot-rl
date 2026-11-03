@@ -298,44 +298,50 @@ def both_feet_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     cfg.episode_length_s = 1e9
   return cfg
 
-# Tache avec pour but de grimper le plus haut possible sur le mur N1 (Echec de l'architecture de record)
-# (Travail personel)
+# Tache avec pour but de grimper le plus haut possible sur le mur N1 (Echec, voir climb_N1_route_env_cfg(...) pour la réussite)
+# Choix d'une architecture de reward type record, comme monter son tronc plus haut que son record ou atteindre une nouvelle prise plus haute
+# Pas de route imposé, chaque membre peut viser n'importe quelle prise du barreau au-dessus de son record (l'echec est en grande partie due à cause de ce choix)
+# (Travail personnel)
 def climb_N1_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   wall = Wall.load(WALL)
   
   # On active maitenant le maillage des collisions pour toutes les prises du mur
   cfg = _base_cfg(play, max_row=87, mesh_holds=tuple(h for h in wall.holds))
 
+  # On met à jour les observations du critic pour cette tache
   critic = cfg.observations["critic"].terms
-  critic.pop("hooked")
-  critic["ball_offsets"] = ObservationTermCfg(func=records_mdp.nearest_socket_offsets, params={"wall_name": WALL})
+  critic.pop("hooked")    # Observer que les boules soit dans les prises de base n'a plus de sens dans cette tache
+  critic["ball_offsets"] = ObservationTermCfg(func=records_mdp.nearest_socket_offsets, params={"wall_name": WALL}) # Un vecteur vers la prise la plus proche pour chaque membre
+  # Pour chaque membre, le critic voit la prise de l'étage supérieur la plus proche actuellement
   critic["next_candidate"] = ObservationTermCfg(func=records_mdp.next_candidate_offsets, params={"wall_name": WALL})
-  critic["hooked_number"] = ObservationTermCfg(func=records_mdp.hooked_any, params={"wall_name": WALL})
+  critic["hooked_number"] = ObservationTermCfg(func=records_mdp.hooked_any, params={"wall_name": WALL})  # Pour chaque membre, 1 si sa boule est dans une prise (n'importe laquelle), 0 sinon
 
+  # Contrainte dure, fin de l'épisode si le tronc descend plus bas que son maximum enregistré (de 5cm) (chute)
   cfg.terminations["fell"] = TerminationTermCfg(func=records_mdp.trunk_dropped_record, params={"max_drop": 0.05})
+  # Contrainte dure, fin de l'épisode si trois des quatre membre se détache d'une prise (s’éloigne de plus de 3 cm)
   cfg.terminations["less_two_hooked"] = TerminationTermCfg(func=records_mdp.less_two_hooked, params={})
 
+  # Remise à zéro de l'état des records apres chaque épisode (record des prises, record du tronc)
   cfg.events["reset_record"] = EventTermCfg(func=records_mdp.reset_record, mode="reset", params={"wall_name": WALL})
 
-  # Creation des reward exclusive à cette tache
-  # Reward de 
+  # Gain de record de la hauteur du tronc (300 x 0,02 = recompense de 6 par metre gagné, soit environ 0.45 par barreau (éloigné de 7.5cm))
   cfg.rewards["trunk_height_record"] = RewardTermCfg(
     func=records_mdp.trunk_height_record, weight=300.0, params={},
   )
 
-  # Reward progressive de guidage
+  # Gain de record quand un membre s'approche d'une prise plus haute que son record (avec les 3 autre membre attaché) (700 x 0,02 = 14 par mètre, donc environ 1 par 7cm d'approche)
   cfg.rewards["next_hold_rung"] = RewardTermCfg(
     func=records_mdp.next_hold_rung, weight=700.0, params={},
   )
 
-  # Reward 
+  # Bonus ponctuel quand un membre rentre dans une prise plus haute que son record (au moins 0.1sec) (250 x 0,02 = recompense de 5)
   cfg.rewards["member_hold_record"] = RewardTermCfg(
     func=records_mdp.member_hold_record, weight=250.0, params={},
   )
 
-  # Reward qui puni un épisode qui se termine par un echec (fell ou less than two hooked)
-  # Le probleme est que cette tache recompense les records et non la continuité
-  # Donc sans cette reward punitive, le robot prefere se jeter dans le vide pour monter un peu une fois les reward de record facile obtenu
+  # Reward qui puni un épisode qui se termine par un echec (fell ou less than two hooked) (−500 × 0,02 = −10 par chute)
+  # Le probleme est que cette tache recompense les records et non la continuité, l'approche petit à petit d'une nouvelle prise
+  # Donc sans cette reward punitive, le robot se jete dans le vide pour monter un peu une fois les reward de record facile obtenu (et battra des fois son record de la hauteur du tronc)
   cfg.rewards["terminated_penalty"] = RewardTermCfg(func=records_mdp.terminated_penalty, weight=-500.0)
 
   cfg.episode_length_s = 20.0
@@ -344,50 +350,54 @@ def climb_N1_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 # Tache avec pour but de grimper le plus haut possible sur le mur N1, cette fois en suivant un chemin hardcodé (pas de solveur pour le moment)
-# (Travail personel)
+# Un membre actif à la fois avec une prise plus haute à atteindre, qui cycle : pied gauche, pied droit, main droite, main gauche
+# (Travail personnel)
 def climb_N1_route_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   wall = Wall.load(WALL)
   
-  # Maillages de collision sur les prises des rangées 2 et 7 (là où passe le pied). Sans ca, la tige et le pied traversent le corps des prises (coute 20% de vitesse)
+  # Maillages de collision sur les prises du mur
   cfg = _base_cfg(play, max_row=87, mesh_holds=tuple(h for h in wall.holds))
 
-  # On modifie les observations exclusives au critic pour que les prises cibles soit celle qu'on vise dans cette tache
+  # On met à jour les observations du critic et de l'actor pour cette tache
   critic = cfg.observations["critic"].terms
-  critic.pop("hooked")
-  critic["ball_offsets"] = ObservationTermCfg(func=route_mdp.cycling_ball_offsets, params={"wall_name": WALL})
-  critic["active_limb_offset"] = ObservationTermCfg(func=route_mdp.active_limb_offset, params={"wall_name": WALL})
+  critic.pop("hooked")    # Observer que les boules soit dans les prises de base n'a plus de sens dans cette tache
+  critic["ball_offsets"] = ObservationTermCfg(func=route_mdp.cycling_ball_offsets, params={"wall_name": WALL})  # Maintenant, un vecteur vers la prise attribué à chaque membre (celle qu'il tient ou vient de valider)
+  critic["active_limb_offset"] = ObservationTermCfg(func=route_mdp.active_limb_offset, params={"wall_name": WALL})    # Un vecteur vers la prise cible du membre actif
 
   # Le membre actif : l'actor doit le connaître pour savoir quoi bouger (le critic aussi)
   actor = cfg.observations["actor"].terms
-  actor["active_limb"] = ObservationTermCfg(func=route_mdp.active_limb, params={"wall_name": WALL})
+  actor["active_limb"] = ObservationTermCfg(func=route_mdp.active_limb, params={"wall_name": WALL})   # Nouvel observation, le membre parmis les 4 qui bouge actuellement
   critic["active_limb"] = ObservationTermCfg(func=route_mdp.active_limb, params={"wall_name": WALL})
 
-  # Remise à zéro de l'état de la route (coup en cours, prises attribuées, record du tronc)
+  # Remise à zéro de l'état de la route apres chaque épisode (coup en cours, prises attribuées, record du tronc)
   cfg.events["reset_route"] = EventTermCfg(func=route_mdp.reset_route, mode="reset", params={"wall_name": WALL})
 
   # Creation des reward exclusive à cette tache
-  # Reward de maintient des boules à leurs prises (contrainte douce), note de 0 à 1 en fonction de la distance d'une boule d'une main avec sa prise de base (moyenne des 2 bras)
+  # Reward de maintient des trois membre inactif à leurs prises (contrainte douce), note de 0 à 1 en fonction de la distance
   cfg.rewards["others_limbs_hooked"] = RewardTermCfg(
     func=route_mdp.others_limbs_hooked, weight=1.0, params={"std": 0.01},
   )
-  # Reward progressive de guidage, note de 0 à 2 en fonction de la distance entre un pied et sa prise cible
-  cfg.rewards["active_limb_reach"] = RewardTermCfg(
-    func=route_mdp.active_limb_reach, weight=2.0, params={"std": 0.04},
-  )
-  # Reward progressive de guidage, note de 0 à 2 en fonction de la distance entre un pied et sa prise cible
+
+  # Reward progressive de guidage, note de 0 à 1 en fonction de la distance entre le membre actif et sa prise cible
+  # Gaussienne large pour encourager l'approche de la boule à la prise cible, même si la boule est encore loin de cette prise
   cfg.rewards["active_limb_reach_far"] = RewardTermCfg(
     func=route_mdp.active_limb_reach, weight=1.0, params={"std": 0.12},
   )
+  # Similaire, mais gausienne serré pour récompenser la fin du mouvement lorsque la boule est déjà proche de sa prise cible
+  cfg.rewards["active_limb_reach"] = RewardTermCfg(
+    func=route_mdp.active_limb_reach, weight=2.0, params={"std": 0.04},
+  )
 
-  # Reward tout ou rien, 5 si la boule du pied est attaché dans sa prise cible (moins de 6 mm du centre de la prise)
+  # Bonus ponctuel quand le membre actif atteint sa cible (boule à moins de 6mm pendant 0,1s) (500 x 0,02 = recompense de 10)
   cfg.rewards["active_limb_hooked"] = RewardTermCfg(
     func=route_mdp.active_limb_hooked, weight=500.0, params={},
   )
 
-  # Echec exclusif a cette tache (contrainte dure), si un des bras se détache de leurs prise (s’éloigne de plus de 3 cm de sa prise)
+  # Contrainte dure, fin de l'épisode si un des trois membre inactif se détache de sa prise (s’éloigne de plus de 3 cm de sa prise)
   cfg.terminations["other_limbs_lost"] = TerminationTermCfg(
     func=route_mdp.other_limbs_lost, params={"max_dist": 0.03},
   )
+  # Contrainte dure, fin de l'épisode si le tronc descend plus bas que son maximum enregistré (de 5cm) (chute)
   cfg.terminations["fell"] = TerminationTermCfg(func=route_mdp.route_trunk_dropped, params={"max_drop": 0.05})
 
   cfg.episode_length_s = 20.0
