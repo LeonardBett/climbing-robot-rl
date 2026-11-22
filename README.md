@@ -5,9 +5,6 @@ I set up a GPU training environment (mjlab, on my RTX 5070) for the hackathon's 
 and spotted its flaws (lost contacts, limbs passing through the wall, the holds or the other leg), then created and
 trained my own tasks using what I learned during the hackathon, up to a policy that climbs the whole N1 wall in
 simulation.  
-I relied on an AI (Claude) to assemble this environment from three existing repositories (robot model, BAM servo
-model, official simulator) that did not work together as-is, to fix the collision flaws I had spotted, to learn how
-PPO and the structure of a task work from an example.
 
 https://github.com/user-attachments/assets/44066fdb-e204-49ff-a39f-2f81f943e0cf
 
@@ -127,6 +124,12 @@ The first four files describe the physical world and rarely change anymore. My w
 - Known limit of the `Climb-N1Route` policy: it moves too fast (~0.4 s per move) and its training ended with a high
   exploration noise. Before any real-robot test, it would need a short fine-tuning with a joint velocity penalty
   (`joint_vel_l2`), a stronger `action_rate` penalty and a lower entropy coefficient.
+
+## AI
+
+I relied on an AI (Claude) to assemble this environment from three existing repositories (robot model, BAM servo
+model, official simulator) that did not work together as-is, to fix the collision flaws I had spotted, to learn how
+PPO and the structure of a task work from an example.
 
 ## Versions
 
